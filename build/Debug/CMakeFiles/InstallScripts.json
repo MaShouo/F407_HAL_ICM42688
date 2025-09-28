@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"D:/STM32_HAL_Learn/Cube_Project/F407_HAL_imu42688/build/Debug/cmake_install.cmake",
-		"D:/STM32_HAL_Learn/Cube_Project/F407_HAL_imu42688/build/Debug/cmake/stm32cubemx/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
