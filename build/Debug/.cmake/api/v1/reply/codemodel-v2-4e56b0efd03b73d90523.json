@@ -1,0 +1,88 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "cmake/stm32cubemx",
+					"jsonFile" : "directory-cmake.stm32cubemx-Debug-a874d3cc84b5982fda2e.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "cmake/stm32cubemx",
+					"targetIndexes" : 
+					[
+						1
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "LED",
+					"targetIndexes" : 
+					[
+						0,
+						1
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "LED::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-LED-Debug-2d27c1c558b15a3cc72a.json",
+					"name" : "LED",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "STM32_Drivers::@768a070a0fe75716b479",
+					"jsonFile" : "target-STM32_Drivers-Debug-f6c9bb27db7f751ea1a2.json",
+					"name" : "STM32_Drivers",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "D:/STM32_HAL_Learn/Cube_Project/F407_HAL_imu42688/build/Debug",
+		"source" : "D:/STM32_HAL_Learn/Cube_Project/F407_HAL_imu42688"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 8
+	}
+}
