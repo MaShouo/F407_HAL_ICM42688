@@ -1,10 +1,4 @@
-<!--
- * @Author: MaShuo 1324062363@qq.com
- * @Date: 2025-09-28 19:30:21
- * @LastEditors: MaShuo 1324062363@qq.com
- * @LastEditTime: 2025-09-28 19:35:08
- * @FilePath: \F407_HAL_imu42688\README.md
- * @Description: 
+
 ## 项目简介
 
 本仓库是基于 STM32F407（HAL 库 + CMake 构建）实现的一个小型两轮自平衡车（或姿态采集平台）控制程序，核心包含：
