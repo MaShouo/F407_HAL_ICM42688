@@ -1,268 +1,246 @@
- # F407 HAL 自平衡车 (ICM42688 + 双环 PID)
+<!--
+ * @Author: MaShuo 1324062363@qq.com
+ * @Date: 2025-09-28 19:30:21
+ * @LastEditors: MaShuo 1324062363@qq.com
+ * @LastEditTime: 2025-09-28 19:35:08
+ * @FilePath: \F407_HAL_imu42688\README.md
+ * @Description: 
+## 项目简介
 
-基于 STM32F407、HAL 库与 ICM42688 六轴 IMU 的小型两轮自平衡车示例工程。项目采用 CMake 构建，集成时间片任务调度器 TMT、互补滤波姿态解算、速度/角度双环 PID、编码器测速、PWM 驱动直流电机以及 OLED 显示。
+本仓库是基于 STM32F407（HAL 库 + CMake 构建）实现的一个小型两轮自平衡车（或姿态采集平台）控制程序，核心包含：
 
-> 如果你来自 Keil/IAR 环境，本工程演示了使用 `arm-none-eabi-gcc + CMake` 的轻量化跨平台构建方式，便于在 VS Code / CLion 等现代 IDE 中开发与调试。
+1. ICM42688 六轴 IMU 采集与姿态解算（互补滤波）
+2. 双环 PID（内环：直立角度；外环：速度/位移补偿）
+3. 双路编码器测速（TIM2 / TIM3）
+4. PWM 电机驱动（TIM8 CH1/CH2）
+5. OLED 显示调试信息
+6. 轻量级任务调度器 `TMT`（定时调度 OLED / 姿态刷新等任务）
+
+> 目标：稳定保持小车直立，并可在后续扩展速度/位移/遥控功能。
 
 ---
 
-## ✨ 功能特性
-
-- ICM42688 初始化与 6 轴数据读取（加速度 + 陀螺仪 + 温度）
-- 互补滤波 (Complementary Filter) 姿态解算，输出欧拉角 (roll/pitch/yaw)
-- 双环 PID：
-  - 外环：速度（基于双路编码器计数平均值）
-  - 内环：直立角（roll 保持）
-- 电机 PWM 驱动 + 编码器测速（TIM2 / TIM3 作为编码器接口）
-- OLED 显示调试信息（任务化刷新）
-- 轻量级时间片任务调度器 TMT（定时器中断驱动 tick）
-- 参数易调试：PID 结构体在 `main.c` 中集中初始化
-- CMake + GCC 交叉编译，生成 `LED.elf / .map`
-
----
-
-## 🛠 硬件平台
+## 硬件平台
 
 | 模块 | 说明 |
-|------|------|
-| MCU | STM32F407（外部 HSE，168MHz 配置） |
-| IMU | ICM42688（I2C 地址 0x69） |
-| 电机 | 两路直流编码电机（脉冲换算：`22 * 30 = 660` 脉冲/圈） |
-| 显示 | 0.96"/0.91" OLED（I2C/SPI 取决于你的硬件实现） |
-| 供电 | 电机 + 控制分开稳压（建议） |
-| 调试 | ST-Link V2 |
+| ---- | ---- |
+| MCU | STM32F407（外部 HSE，168MHz） |
+| IMU | ICM42688（I2C 接口，地址 0x47 WHO_AM_I） |
+| 编码器 | 2 路 AB 相增量式编码器，分别接 TIM2 / TIM3  |
+| 电机驱动 | 全桥（方向 GPIO + PWM） |
+| 显示 | 0.96 寸 OLED（I2C/SPI，代码中为自写驱动接口） |
+| 其他 | 按键、调试口、供电模块 |
 
-> 请根据你实际接线核对 `imu42688.ioc` 中的引脚分配。
-
----
-
-## 🧱 软件结构概览
-
-```
-Core/              STM32CubeMX 生成的 HAL 框架与启动文件
-Drivers/           HAL 与 CMSIS 库
-User_Core/         用户功能模块（电机 / PID / IMU / OLED / 任务）
-TMT/               时间片任务调度器（Apache-2.0）
-cmake/             交叉编译工具链与 CubeMX 子目录集成
-CMakeLists.txt     顶层构建脚本
-```
-
-关键数据流：
-
-1. TIM6 周期触发读取 IMU → `ICM42688_Get6Axis()` → 互补滤波更新 `car_angles`
-2. TIM12 周期 (聚合计数达到条件) → 编码器速度计算 + 外环速度 PID → 生成角度偏置
-3. 内环角度 PID → 输出 PWM → `Motor_SetLeftPWM / Motor_SetRightPWM`
-4. TMT 调度 `Task_Attitude` / `Task_OLED` 周期刷新显示或运算
+（具体管脚分配参见根目录文档 `平衡车F4引脚分配.docx` 或 CubeMX 配置文件 `imu42688.ioc`）
 
 ---
 
-## 🧩 关键模块说明
+## 软件 / 工具链
 
-| 模块 | 文件 | 说明 |
-|------|------|------|
-| IMU | `User_Core/Src/icm42688.c` / `icm42688.h` | I2C 读写 & WHO_AM_I 检测 & 6 轴原始数据转换 |
-| 姿态解算 | `icm42688.c` | `Complementary_Filter()` 互补滤波；`Attitude_Init()` 初始化 |
-| PID | `User_Core/Src/PID.c` / `PID.h` | 通用增量/位置式（当前实现为位置式）结构体 + 约束 |
-| 电机 & 编码器 | `Motor.c` / `Motor.h` | PWM 设置与编码器脉冲读取 |
-| 任务调度 | `TMT/TMT.c` / `TMT.h` | 基于 TIM14 tick 的简单时间片轮询 |
-| 任务封装 | `Task.c` / `Task.h` | OLED / Attitude 更新任务入口 |
-| 主控 | `Core/Src/main.c` | 时钟、外设、PID 参数、主循环 `tmt.run()` |
+| 组件 | 版本 / 说明 |
+| ---- | ---------- |
+| 编译器 | arm-none-eabi-gcc (需支持 C11) |
+| 构建系统 | CMake ≥ 3.22 |
+| 依赖 | STM32 HAL / CMSIS（已随仓库提供） |
+| 调试 | OpenOCD / ST-Link Utility / pyOCD 均可 |
 
----
-
-## ⚙️ 构建环境准备（Windows 示例）
-
-1. 安装 ARM GCC 工具链：
-   - 推荐：Arm GNU Toolchain (原 arm-none-eabi-gcc) 12.x 或以上
-   - 安装后将其 `bin` 目录加入系统 `PATH`
-2. 安装 CMake ≥ 3.22
-3. 可选：Ninja（更快）
-4. VS Code 插件（可选）：CMake Tools / Cortex-Debug
-
-验证：
-
-```powershell
-arm-none-eabi-gcc --version
-cmake --version
-```
+Windows 下建议安装：
+1. Arm GNU Toolchain（添加到 PATH）
+2. CMake + Ninja
+3. ST-Link 驱动 + OpenOCD 或 STM32CubeProgrammer
 
 ---
 
-## 🧪 编译步骤（命令行）
+## 目录结构概览
 
-```powershell
-# 1. 创建构建目录
-mkdir build; cd build
-
-# 2. 生成工程 (Debug)
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..
-
-# 3. 编译
-cmake --build . --target LED -j
-
-# 4. 查看尺寸
-arm-none-eabi-size LED.elf
+```
+Core/                # CubeMX 生成的核心工程：时钟、外设初始化、启动代码等
+User_Core/           # 用户功能层（应用逻辑）
+  Inc/               # 用户头文件
+  Src/               # 用户源文件（PID / IMU / OLED / Motor / Task / Delay 等）
+TMT/                 # 轻量级任务调度器
+Drivers/             # HAL & CMSIS 库
+cmake/               # CMake 工具链、CubeMX 子目录构建脚本
+startup_stm32f407xx.s# 启动文件
+STM32F407XX_FLASH.ld # 链接脚本
+imu42688.ioc         # CubeMX 配置文件（如需修改外设重新生成）
 ```
 
-生成的产物：`build/LED.elf`、`LED.map`
+关键自定义模块：
 
-> 如需 Release：`-DCMAKE_BUILD_TYPE=Release`
+| 模块 | 文件 | 功能 |
+| ---- | ---- | ---- |
+| IMU 驱动 | `icm42688.c/h` | I2C 读写、寄存器配置、六轴数据采集 |
+| 姿态解算 | `icm42688.c` | `Complementary_Filter` 互补滤波 + 初始静置校准 |
+| PID 控制 | `PID.c/h` | 位置式 PID，包含积分开关与限幅防饱和 |
+| 电机与编码器 | `Motor.c/h` | PWM 输出 + 正反转 GPIO 控制 + 编码器读数并清零 |
+| 任务调度 | `TMT.c/h` | 周期任务创建、tick 节拍、`tmt.run()` 主循环调度 |
+| OLED | `OLED*.c/h` | 基础字符/格式化输出刷新界面 |
+| 任务逻辑 | `Task.c` | 信息显示、姿态/速度参数可视化 |
 
 ---
 
-## 🔌 烧录 / 调试
+## 控制算法说明
 
-使用 ST-Link：
+整体采用 双环串级 PID：
 
-1. 安装 OpenOCD 或 STM32CubeProgrammer
-2. 典型 OpenOCD 烧录命令：
+1. 外环：速度（基于编码器计数 -> 线速度估算），目标为 0（保持原地），输出为“角度偏移指令”
+2. 内环：直立角度 PID，目标角 = 0° - 外环输出（动态平衡）
+3. PWM 输出：内环 PID 输出直接映射为左右轮功率（带方向 GPIO 控制）
 
-```powershell
-openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program build/LED.elf verify reset exit"
+主要参数（`main.c` 中初始化）：
+```
+pidAngle: Kp=8.8, Ki=0.01, Kd=4.8, 输出限幅 ±200
+pidSpeed: Kp=5.0, Ki=0.0,  Kd=0.5, 输出限幅 ±50
 ```
 
-或者使用 `Cortex-Debug` 在 VS Code 中配置 `launch.json`：
+编码器换算：
+```
+轮径约 65mm -> 轮周长 ≈ 0.2042 m
+减速比*编码器：22 * 30 = 660 脉冲/轮圈
+速度(m/s) = 平均脉冲 * 轮周长 / 660 / 控制周期
+```
 
-```jsonc
-{
-  "name": "Debug F407",
-  "type": "cortex-debug",
-  "request": "launch",
-  "servertype": "openocd",
-  "executable": "${workspaceFolder}/build/LED.elf",
-  "configFiles": [
-    "interface/stlink.cfg",
-    "target/stm32f4x.cfg"
-  ],
-  "runToEntryPoint": "main"
+姿态解算：
+```
+互补滤波 alpha = 0.98 （陀螺积分为主，加速度校正为辅）
+首次更新或 dt>0.1s ：使用加速度初始化 roll/pitch
+Yaw 暂未融合磁力计，仅陀螺积分（会漂移）
+```
+
+定时器中断分工（`HAL_TIM_PeriodElapsedCallback`）：
+| 定时器 | 任务 |
+| ------ | ---- |
+| TIM12 | 控制周期：编码器读取 + 双环 PID + PWM 更新（每若干 tick） |
+| TIM14 | 为调度器 `tmt.tick()` 提供系统节拍 |
+| TIM6  | 采样 IMU + 调用互补滤波（降低主循环负载） |
+
+主循环：
+```c
+while(1) {
+	 tmt.run(); // 执行注册的 OLED / Attitude 等任务
 }
 ```
 
 ---
 
-## 🧮 双环 PID 简述
+## 构建与烧录
 
-主控在 `TIM12` 的周期回调中完成：
+### 1. 准备环境（Windows PowerShell）
 
-1. 读取编码器：`cntL / cntR` → 平均脉冲数 → 速度 (m/s)
-2. 速度环（外环）：`pidSpeed.Target = Speed`（整车目标速度，可由按键或串口设定）
-3. 速度环输出 → 角度偏置 `angle_offset`
-4. 角度环（内环）：`pidAngle.Target = -angle_offset`，反馈 `roll`
-5. 输出 PWM（两侧一致，可扩展差分转向）
-
-当前 PID 参数位于 `main.c`：
-
-```c
-PID_t pidAngle = { .Kp=8.8f, .Ki=0.01f, .Kd=4.8f, .OutMax=200, .OutMin=-200 };
-PID_t pidSpeed = { .Kp=5.0f, .Ki=0.0f,  .Kd=0.5f, .OutMax=50,  .OutMin=-50  };
+安装并验证：
+```
+arm-none-eabi-gcc --version
+cmake --version
+ninja --version
 ```
 
-调参建议：
+### 2. 生成与编译
 
-| 阶段 | 操作 | 观察 |
-|------|------|------|
-| 1 | 置 `Ki=0`，先调 Kp | 直立是否快速回正/有余振 |
-| 2 | 加 Kd | 抑制过冲，减少震荡 |
-| 3 | 速度环 Kp 由小到合适 | 车不再明显前后漂移 |
-| 4 | 需要时微加 Ki | 长期漂移校正（防积分饱和） |
-
----
-
-## 🧭 姿态解算（互补滤波）
-
-流程：
-
-1. 陀螺积分获得短期动态角速度变化
-2. 加速度（重力方向）提供低频参考
-3. 加权融合：`angle = α*(angle + gyro*dt) + (1-α)*acc_angle`
-4. 输出 `euler_angles_t car_angles`
-
-如需更高精度，可替换为 Mahony / Madgwick / EKF（高算力时）。
-
----
-
-## ⏱ 任务调度 (TMT)
-
-`TIM14` 中断中调用 `tmt.tick()`，主循环持续 `tmt.run()`：
-
-```c
-tmt.create(Task_OLED, 100);     // 每 100 ticks 刷新 OLED
-tmt.create(Task_Attitude, 100); // 可扩展，当前姿态主要在定时器中断完成
+```
+mkdir build; cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ..
+ninja
 ```
 
-添加一个新任务：
+生成的目标：`LED.elf` / `LED.bin`
 
-```c
-void Task_User(void) { /* ... */ }
-tmt.create(Task_User, 50);  // 50 ticks 周期
+### 3. 烧录示例（任选其一）
+
+OpenOCD：
+```
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program build/LED.elf verify reset exit"
+```
+
+STM32CubeProgrammer：
+```
+STM32_Programmer_CLI -c port=SWD -d build/LED.bin 0x08000000 -v -rst
+```
+
+JLink（如使用 JLink）：
+```
+JLink.exe -device STM32F407VG -if SWD -speed 4000 -CommanderScript flash.jlink
+```
+
+`flash.jlink` 示例：
+```
+r
+erase
+loadfile build/LED.bin,0x08000000
+verifybin build/LED.bin,0x08000000
+g
+q
 ```
 
 ---
 
-## 🔧 参数 & 魔术数字来源
+## 参数调试建议
 
-| 名称 | 位置 | 含义 |
-|------|------|------|
-| `wheel_circ` | `main.c` | 轮周长 (π * 直径，示例直径 65mm) |
-| `pulses_per_rev` | `main.c` | 编码器一圈脉冲数 = 减速机构 * 编码器线数 |
-| `control_dt` | `main.c` | 速度环控制周期 (s) |
-
-请根据实际电机/减速比/编码器修改。
-
----
-
-## 🐞 常见问题 (FAQ)
-
-| 问题 | 可能原因 | 处理 |
-|------|----------|------|
-| ICM42688 init failed | I2C 地址/焊接/上电顺序 | 检查上拉电阻、示波器测 SCL/SDA |
-| 姿态角跳变 | I2C 读包错/滤波参数不合理 | 增大互补滤波低通比例，检查溢出 |
-| 车体快速倒下 | 角度环 Kp 太小或方向接反 | 反向 PWM / 增大 Kp |
-| 震荡严重 | Kp 过大或 Kd 太小 | 减小 Kp，增大 Kd |
-| 一侧轮不转 | PWM 通道/引脚定义不符 | 核对 CubeMX & `Motor.c` |
+1. 先只调内环（角度）：
+	- 断开/屏蔽外环（把外环输出 angle_offset=0）
+	- 增大 Kp 直到有轻微振荡，再稍微回退
+	- 加入 Kd 抑制快速震荡；最后极小幅度增加 Ki 消除静差
+2. 启用外环（速度）：
+	- 保持 Ki=0 先调 Kp，确保前后摆幅减小
+	- 再加入少量 Kd 平滑响应；最后再斟酌 Ki
+3. 防积分饱和：`PID.c` 中已在 Ki=0 时清零积分，可避免积累爆发
+4. OLED 实时查看：
+	- `PS` 行：速度环输出
+	- `Pitch/Roll/Yaw`：姿态角
+	- `L/R`：两侧编码器增量
+	- `S/T`：速度实际值 / 目标值
+5. 若姿态抖动：
+	- 查看 IMU 固定是否牢固、陀螺零漂是否过大（可扩展温漂补偿）
+6. 若速度估算跳变：
+	- 检查编码器接线/滤波，可对脉冲做低通或滑动平均
 
 ---
 
-## 🚀 后续可拓展
+## 常见问题 FAQ
 
-- 串口/蓝牙参数在线调试
-- 速度差分控制实现转向
-- Mahony / Madgwick 替换互补滤波
-- Flash 保存 PID 参数
-- 加入 FreeRTOS（演示从 TMT 迁移）
-- CAN / 无线遥控
-
----
-
-## 📄 许可证与版权
-
-| 组件 | 许可证 |
-|------|--------|
-| 本项目用户代码 | MIT（可根据需要自行补充 LICENSE） |
-| STM32 HAL & CMSIS | ST 官方许可（位于 `Drivers/` 中的 `LICENSE.txt`） |
-| TMT 调度器 | Apache-2.0 |
-
-请确保下游分发时保留相关版权声明。
-
-> 建议在仓库根目录新增 `LICENSE`（若你选择 MIT / Apache-2.0 / BSD 等）。
+| 问题 | 排查思路 |
+| ---- | -------- |
+| ICM42688 init failed | 检查 I2C 供电/地址/上拉；示波器看 SCL/SDA 波形 |
+| 姿态角突然跳变 | 采样间隔 dt 是否异常（任务被长阻塞）；IMU 震动过大 |
+| 小车一侧轮子不转 | GPIO 方向脚或 PWM 通道引脚复用配置是否正确 |
+| 编码器读数为 0 | TIM2/TIM3 时钟/复用、AB 相接反（可尝试交换 A/B） |
+| PID 不收敛 | 先降速环输出限幅；逐级调参（内环 → 外环） |
 
 ---
 
-## 🙌 致谢
+## 后续可扩展方向
 
-- STMicroelectronics HAL & CMSIS
-- zeweni 的 TMT 任务调度框架
-- 社区开源平衡车调参经验分享
+- [ ] 加入遥控（蓝牙/串口/RC 接收机）
+- [ ] 位置环（对累计位移进行控制）
+- [ ] 使用 Kalman / Mahony / Madgwick 取代互补滤波
+- [ ] Flash 参数存储（保存 PID）
+- [ ] 增加故障保护（倾角>阈值自动停 PWM）
+- [ ] 电池电压检测 + OLED 显示
+- [ ] Yaw 校正（加入磁力计或光流/视觉）
 
 ---
 
-## 📨 反馈
+## 快速开始 TL;DR
 
-欢迎提交 Issue / PR：
-- 优化姿态解算
-- 改进 PID 结构（抗积分饱和 / 前馈）
-- 更多显示/调试接口
+1. 接好硬件，确认 I2C & 编码器 & PWM 引脚一致
+2. 编译：`cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release . && ninja -C build`
+3. 烧录 `LED.bin` 到 0x08000000
+4. 上电后观察 OLED：若显示 `ICM42688 init success` 即开始运行
+5. 调参：优先 Angle 内环，其次 Speed 外环
 
-如果你在使用中遇到具体问题，可在 README 末尾追加使用环境（编译器版本 / 供电 / 负载）。
+---
 
-祝调参愉快！🤖
+## 许可协议
+
+HAL/CMSIS 属于 ST 官方许可，本项目用户代码默认以 MIT 授权（如需变更可在根目录添加 LICENSE）。
+
+---
+
+## 致谢
+
+感谢 STM32 HAL、开源社区提供的工具链支持。如果你有改进建议或发现问题，欢迎提交 Issue 或 PR。
+
+---
+
+若需英文 README 或补充波形/照片，请提 Issue 告知。
+
